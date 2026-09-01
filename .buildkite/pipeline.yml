@@ -1,0 +1,15 @@
+steps:
+  - label: ":shell: Shellcheck"
+    plugins:
+      shellcheck#v1.4.0:
+        files: hooks/**
+
+  - label: ":sparkles: Lint"
+    plugins:
+      plugin-linter#v3.3.0:
+        id: instant-labs/base-branch-build
+
+  - label: ":docker: Tests"
+    plugins:
+      docker-compose#v5.14.0:
+        run: tests

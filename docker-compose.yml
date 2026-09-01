@@ -1,0 +1,18 @@
+services:
+  tests:
+    command: ["bats", "--show-output-of-passing-tests", "--verbose-run", "tests/"]
+    image: buildkite/plugin-tester:v4.3.0
+    volumes:
+      - ".:/plugin:ro"
+
+  lint:
+    image: buildkite/plugin-linter:v3.0.0
+    command: ['--id', 'instant-labs/base-branch-build']
+    volumes:
+      - ".:/plugin:ro"
+
+  shellcheck:
+    image: koalaman/shellcheck-alpine:v0.11.0
+    command: ['shellcheck', '/plugin/hooks/environment']
+    volumes:
+      - ".:/plugin:ro"

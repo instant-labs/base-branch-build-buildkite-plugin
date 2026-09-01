@@ -1,0 +1,119 @@
+#!/bin/bash
+
+set -euo pipefail
+
+# The branch option selects a branch such as main. Without it the plugin uses
+# the base branch of the pull request.
+branch="${BUILDKITE_PLUGIN_BASE_BRANCH_BUILD_BRANCH:-}"
+
+if [[ -z "${branch}" ]]; then
+    # Skip if not a PR
+    if [[ "${BUILDKITE_PULL_REQUEST:-false}" == "false" ]]; then
+        echo "Not a pull request and no branch option, skipping base branch build lookup"
+        exit 0
+    fi
+
+    if [[ -z "${BUILDKITE_PULL_REQUEST_BASE_BRANCH:-}" ]]; then
+        echo "Error: BUILDKITE_PULL_REQUEST_BASE_BRANCH environment variable is required"
+        exit 1
+    fi
+
+    branch="${BUILDKITE_PULL_REQUEST_BASE_BRANCH}"
+fi
+
+if [[ -z "${BUILDKITE_API_TOKEN:-}" ]]; then
+    echo "Error: BUILDKITE_API_TOKEN environment variable is required"
+    exit 1
+fi
+
+if [[ -z "${BUILDKITE_ORGANIZATION_SLUG:-}" ]]; then
+    echo "Error: BUILDKITE_ORGANIZATION_SLUG environment variable is required"
+    exit 1
+fi
+
+if [[ -z "${BUILDKITE_PIPELINE_SLUG:-}" ]]; then
+    echo "Error: BUILDKITE_PIPELINE_SLUG environment variable is required"
+    exit 1
+fi
+
+for required in curl jq; do
+    if ! command -v "$required" >/dev/null 2>&1; then
+        echo "Error: $required is required but not installed"
+        exit 1
+    fi
+done
+
+# The token becomes an HTTP header. A value with a quote or a line break can add
+# more headers, so accept only the characters that a Buildkite token contains.
+if [[ ! "${BUILDKITE_API_TOKEN}" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    echo "Error: BUILDKITE_API_TOKEN contains characters that are not valid"
+    exit 1
+fi
+
+# The slugs become part of the request path. A value with a slash sends the
+# request to a different endpoint.
+if [[ ! "${BUILDKITE_ORGANIZATION_SLUG}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "Error: BUILDKITE_ORGANIZATION_SLUG contains characters that are not valid"
+    exit 1
+fi
+
+if [[ ! "${BUILDKITE_PIPELINE_SLUG}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "Error: BUILDKITE_PIPELINE_SLUG contains characters that are not valid"
+    exit 1
+fi
+
+echo "~~~ :buildkite: Looking up last successful build for ${branch}"
+
+# Put the token in a file that only this user can read. An argument is visible
+# in the process list, and the agent prints every command when it runs in debug
+# mode. The here-document keeps the token out of that trace.
+curl_config=$(mktemp)
+cat >"${curl_config}" <<EOF
+header = "Authorization: Bearer ${BUILDKITE_API_TOKEN}"
+EOF
+
+# curl adds the query parameters, so a branch name with "&" or "#" cannot change
+# the request. Redirects stay off to keep the token on api.buildkite.com.
+if ! response=$(curl --silent --show-error --fail --max-time 30 \
+    --config "${curl_config}" \
+    --get \
+    --data-urlencode "branch=${branch}" \
+    --data-urlencode "state=passed" \
+    --data-urlencode "per_page=1" \
+    "https://api.buildkite.com/v2/organizations/${BUILDKITE_ORGANIZATION_SLUG}/pipelines/${BUILDKITE_PIPELINE_SLUG}/builds"); then
+    rm -f "${curl_config}"
+    echo "Error: the request to the Buildkite API failed"
+    exit 1
+fi
+
+rm -f "${curl_config}"
+
+# The API returns an array of builds. jq prints empty fields when it is empty.
+if ! build=$(printf '%s' "${response}" | jq -r '(.[0] // {}) | "\(.number // "") \(.id // "")"'); then
+    echo "Error: the Buildkite API sent a response that is not a list of builds"
+    exit 1
+fi
+
+read -r build_number build_id <<<"${build}"
+
+if [[ -z "${build_number}" || -z "${build_id}" ]]; then
+    echo "No successful builds found for branch ${branch}"
+    exit 0
+fi
+
+# Later steps put these values into commands and URLs. Accept only the formats
+# that the API returns.
+if [[ ! "${build_id}" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+    echo "Error: the Buildkite API returned a build id that is not a UUID"
+    exit 1
+fi
+
+if [[ ! "${build_number}" =~ ^[0-9]+$ ]]; then
+    echo "Error: the Buildkite API returned a build number that is not a number"
+    exit 1
+fi
+
+echo "Found successful build #${build_number} (${build_id}) for branch ${branch}"
+
+# Export the build id as an environment variable
+export BASE_BRANCH_LAST_SUCCESSFUL_BUILD="${build_id}"

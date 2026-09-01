@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/buildkite-plugins/buildkite-plugin-linter/master/lib/plugin-yaml-schema.yml
+name: Base Branch Build
+description: Finds the last successful build of the base branch of a pull request.
+author: https://github.com/instant-labs
+requirements:
+  - bash
+  - curl
+  - jq
+configuration:
+  properties:
+    branch:
+      type: string
+  additionalProperties: false
