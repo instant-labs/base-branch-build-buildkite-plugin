@@ -34,7 +34,7 @@ setup() {
     export BUILDKITE_PLUGIN_BASE_BRANCH_BUILD_BRANCH="main"
 
     stub curl \
-        "--silent --show-error --fail --max-time 30 --config * --get --data-urlencode branch=main --data-urlencode state=passed --data-urlencode per_page=1 https://api.buildkite.com/v2/organizations/acme-corp/pipelines/test-pipeline/builds : echo '[{\"number\": 42, \"id\": \"$BUILD_ID\"}]'"
+        "--silent --show-error --fail --max-time 30 --retry 3 --config - --get --data-urlencode branch=main --data-urlencode state=passed --data-urlencode per_page=1 https://api.buildkite.com/v2/organizations/acme-corp/pipelines/test-pipeline/builds : echo '[{\"number\": 42, \"id\": \"$BUILD_ID\"}]'"
 
     run "$PWD/hooks/environment"
 
@@ -50,7 +50,7 @@ setup() {
     export BUILDKITE_PLUGIN_BASE_BRANCH_BUILD_BRANCH="main"
 
     stub curl \
-        "--silent --show-error --fail --max-time 30 --config * --get --data-urlencode branch=main --data-urlencode state=passed --data-urlencode per_page=1 https://api.buildkite.com/v2/organizations/acme-corp/pipelines/test-pipeline/builds : echo '[]'"
+        "--silent --show-error --fail --max-time 30 --retry 3 --config - --get --data-urlencode branch=main --data-urlencode state=passed --data-urlencode per_page=1 https://api.buildkite.com/v2/organizations/acme-corp/pipelines/test-pipeline/builds : echo '[]'"
 
     run "$PWD/hooks/environment"
 
@@ -158,12 +158,12 @@ header = "X-Injected: yes'
     unstub curl
 }
 
-@test "Passes the token in a file and the branch as an encoded parameter" {
+@test "Passes the branch as an encoded parameter and reads the token from stdin" {
     export BUILDKITE_PULL_REQUEST=123
     export BUILDKITE_PULL_REQUEST_BASE_BRANCH='release&state=failed'
 
     stub curl \
-        "--silent --show-error --fail --max-time 30 --config * --get --data-urlencode 'branch=release&state=failed' --data-urlencode state=passed --data-urlencode per_page=1 https://api.buildkite.com/v2/organizations/acme-corp/pipelines/test-pipeline/builds : echo '[]'"
+        "--silent --show-error --fail --max-time 30 --retry 3 --config - --get --data-urlencode 'branch=release&state=failed' --data-urlencode state=passed --data-urlencode per_page=1 https://api.buildkite.com/v2/organizations/acme-corp/pipelines/test-pipeline/builds : echo '[]'"
 
     run "$PWD/hooks/environment"
 
@@ -173,18 +173,16 @@ header = "X-Injected: yes'
     unstub curl
 }
 
-@test "Removes the file that holds the token" {
+@test "Passes the token on stdin and writes no file" {
     export BUILDKITE_PULL_REQUEST=123
     export BUILDKITE_PULL_REQUEST_BASE_BRANCH="main"
 
-    # The seventh argument is the value of --config
-    stub curl "::echo \"\$7\" >'$BATS_TEST_TMPDIR/path'; cp \"\$7\" '$BATS_TEST_TMPDIR/config'; echo '[]'"
+    stub curl "::cat >'$BATS_TEST_TMPDIR/config'; echo '[]'"
 
     run "$PWD/hooks/environment"
 
     assert_success
     assert_equal "$(cat "$BATS_TEST_TMPDIR/config")" 'header = "Authorization: Bearer testtoken"'
-    refute [ -e "$(cat "$BATS_TEST_TMPDIR/path")" ]
 
     unstub curl
 }

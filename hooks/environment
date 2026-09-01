@@ -64,29 +64,28 @@ fi
 
 echo "~~~ :buildkite: Looking up last successful build for ${branch}"
 
-# Put the token in a file that only this user can read. An argument is visible
-# in the process list, and the agent prints every command when it runs in debug
-# mode. The here-document keeps the token out of that trace.
-curl_config=$(mktemp)
-cat >"${curl_config}" <<EOF
-header = "Authorization: Bearer ${BUILDKITE_API_TOKEN}"
-EOF
-
+# The token goes in on stdin. An argument is visible in the process list, and
+# the agent prints every command when it runs in debug mode. The here-document
+# keeps the token out of that trace, and out of a file that a cancelled job
+# would leave behind.
+#
 # curl adds the query parameters, so a branch name with "&" or "#" cannot change
 # the request. Redirects stay off to keep the token on api.buildkite.com.
-if ! response=$(curl --silent --show-error --fail --max-time 30 \
-    --config "${curl_config}" \
+# --retry covers a timeout or a 5xx. --fail still stops at once on a 401, so a
+# token that is not correct stays loud.
+if ! response=$(curl --silent --show-error --fail --max-time 30 --retry 3 \
+    --config - \
     --get \
     --data-urlencode "branch=${branch}" \
     --data-urlencode "state=passed" \
     --data-urlencode "per_page=1" \
-    "https://api.buildkite.com/v2/organizations/${BUILDKITE_ORGANIZATION_SLUG}/pipelines/${BUILDKITE_PIPELINE_SLUG}/builds"); then
-    rm -f "${curl_config}"
+    "https://api.buildkite.com/v2/organizations/${BUILDKITE_ORGANIZATION_SLUG}/pipelines/${BUILDKITE_PIPELINE_SLUG}/builds" <<EOF
+header = "Authorization: Bearer ${BUILDKITE_API_TOKEN}"
+EOF
+); then
     echo "Error: the request to the Buildkite API failed"
     exit 1
 fi
-
-rm -f "${curl_config}"
 
 # The API returns an array of builds. jq prints empty fields when it is empty.
 if ! build=$(printf '%s' "${response}" | jq -r '(.[0] // {}) | "\(.number // "") \(.id // "")"'); then
@@ -115,5 +114,7 @@ fi
 
 echo "Found successful build #${build_number} (${build_id}) for branch ${branch}"
 
-# Export the build id as an environment variable
+# Export the build id as an environment variable. Every early exit must stay
+# above this line: the agent sources this hook and reads the environment after
+# it returns, so an exit makes the agent drop each value the hook exported.
 export BASE_BRANCH_LAST_SUCCESSFUL_BUILD="${build_id}"
