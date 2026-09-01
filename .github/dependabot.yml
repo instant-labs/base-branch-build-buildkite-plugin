@@ -1,0 +1,16 @@
+# The buildkite plugin versions in .buildkite/pipeline.yml are deliberately
+# absent: Dependabot has no ecosystem that reads them. Bump those by hand.
+version: 2
+updates:
+  - package-ecosystem: docker-compose
+    directory: "/"
+    schedule:
+      interval: weekly
+      time: "13:00"
+    cooldown:
+      default-days: 5
+    open-pull-requests-limit: 10
+    groups:
+      docker-compose:
+        patterns:
+          - "*"
