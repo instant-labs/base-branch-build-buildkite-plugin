@@ -6,6 +6,10 @@ set -euo pipefail
 # the base branch of the pull request.
 branch="${BUILDKITE_PLUGIN_BASE_BRANCH_BUILD_BRANCH:-}"
 
+# The step-key option selects the newest passed build that also has a passed
+# job with this key. A build that skipped the step has none of its artifacts.
+step_key="${BUILDKITE_PLUGIN_BASE_BRANCH_BUILD_STEP_KEY:-}"
+
 if [[ -z "${branch}" ]]; then
     # Skip if not a PR
     if [[ "${BUILDKITE_PULL_REQUEST:-false}" == "false" ]]; then
@@ -62,6 +66,18 @@ if [[ ! "${BUILDKITE_PIPELINE_SLUG}" =~ ^[A-Za-z0-9._-]+$ ]]; then
     exit 1
 fi
 
+if [[ -n "${step_key}" && ! "${step_key}" =~ ^[A-Za-z0-9_:.-]+$ ]]; then
+    echo "Error: the step-key option contains characters that are not valid"
+    exit 1
+fi
+
+# The newest passed build is enough without a step key. With one, look further
+# back for a build that ran the step; 100 is the largest page the API returns.
+per_page=1
+if [[ -n "${step_key}" ]]; then
+    per_page=100
+fi
+
 echo "~~~ :buildkite: Looking up last successful build for ${branch}"
 
 # The token goes in on stdin. An argument is visible in the process list, and
@@ -78,7 +94,7 @@ if ! response=$(curl --silent --show-error --fail --max-time 30 --retry 3 \
     --get \
     --data-urlencode "branch=${branch}" \
     --data-urlencode "state=passed" \
-    --data-urlencode "per_page=1" \
+    --data-urlencode "per_page=${per_page}" \
     "https://api.buildkite.com/v2/organizations/${BUILDKITE_ORGANIZATION_SLUG}/pipelines/${BUILDKITE_PIPELINE_SLUG}/builds" <<EOF
 header = "Authorization: Bearer ${BUILDKITE_API_TOKEN}"
 EOF
@@ -87,8 +103,13 @@ EOF
     exit 1
 fi
 
-# The API returns an array of builds. jq prints empty fields when it is empty.
-if ! build=$(printf '%s' "${response}" | jq -r '(.[0] // {}) | "\(.number // "") \(.id // "")"'); then
+# The API returns an array of builds, newest first. jq prints empty fields when
+# no build matches.
+if ! build=$(printf '%s' "${response}" | jq -r --arg key "${step_key}" '
+    if type != "array" then error("not a list of builds") else . end
+    | map(select($key == "" or any(.jobs[]?; .step_key == $key and .state == "passed")))
+    | (.[0] // {})
+    | "\(.number // "") \(.id // "")"'); then
     echo "Error: the Buildkite API sent a response that is not a list of builds"
     exit 1
 fi
@@ -96,7 +117,11 @@ fi
 read -r build_number build_id <<<"${build}"
 
 if [[ -z "${build_number}" || -z "${build_id}" ]]; then
-    echo "No successful builds found for branch ${branch}"
+    if [[ -n "${step_key}" ]]; then
+        echo "No successful build of branch ${branch} in the last ${per_page} has a passed ${step_key} job"
+    else
+        echo "No successful builds found for branch ${branch}"
+    fi
     exit 0
 fi
 

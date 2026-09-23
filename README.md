@@ -62,6 +62,22 @@ steps:
           branch: main
 ```
 
+### `step-key` (optional, string)
+
+The key of a step whose artifacts you need. The plugin then exports the newest successful build that has a passed job with this key. Use it when the step does not run in every build, for example because `if_changed` skips it. Without the option, the newest successful build can be one that has no artifacts from the step.
+
+The plugin looks at the last 100 successful builds of the branch. When none of them ran the step, it exports nothing.
+
+```yml
+steps:
+  - label: ":github: comment"
+    command: "buildkite-agent artifact download --build \"$BASE_BRANCH_LAST_SUCCESSFUL_BUILD\" 'reports/summary.json' ."
+    plugins:
+      - instant-labs/base-branch-build#v1.1.0:
+          branch: main
+          step-key: lighthouse
+```
+
 ## Environment
 
 | Variable | Description |

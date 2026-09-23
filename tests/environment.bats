@@ -17,7 +17,7 @@ setup() {
     export BUILDKITE_PIPELINE_NAME="test-pipeline"
     export BUILDKITE_PIPELINE_SLUG="test-pipeline"
     export BUILDKITE_API_TOKEN="testtoken"
-    unset BUILDKITE_PLUGIN_BASE_BRANCH_BUILD_BRANCH
+    unset BUILDKITE_PLUGIN_BASE_BRANCH_BUILD_BRANCH BUILDKITE_PLUGIN_BASE_BRANCH_BUILD_STEP_KEY
 }
 
 @test "Skips if not a PR" {
@@ -239,6 +239,64 @@ header = "X-Injected: yes'
 
     assert_failure
     assert_output --partial "Error: the Buildkite API returned a build id that is not a UUID"
+
+    unstub curl
+}
+
+@test "The step-key option selects the newest build with a passed job for that step" {
+    export BUILDKITE_PULL_REQUEST=123
+    export BUILDKITE_PLUGIN_BASE_BRANCH_BUILD_BRANCH="main"
+    export BUILDKITE_PLUGIN_BASE_BRANCH_BUILD_STEP_KEY="lighthouse"
+
+    stub curl \
+        "--silent --show-error --fail --max-time 30 --retry 3 --config - --get --data-urlencode branch=main --data-urlencode state=passed --data-urlencode per_page=100 https://api.buildkite.com/v2/organizations/acme-corp/pipelines/test-pipeline/builds : echo '[{\"number\": 44, \"id\": \"0193c2f1-2c9a-7f3e-9f21-000000000044\", \"jobs\": [{\"step_key\": \"build\", \"state\": \"passed\"}]}, {\"number\": 43, \"id\": \"0193c2f1-2c9a-7f3e-9f21-000000000043\", \"jobs\": [{\"step_key\": \"lighthouse\", \"state\": \"broken\"}]}, {\"number\": 42, \"id\": \"$BUILD_ID\", \"jobs\": [{\"type\": \"waiter\"}, {\"step_key\": \"lighthouse\", \"state\": \"passed\"}]}]'"
+
+    run bash -c "source '$PWD/hooks/environment' && echo \"exported=\$BASE_BRANCH_LAST_SUCCESSFUL_BUILD\""
+
+    assert_success
+    assert_output --partial "Found successful build #42 ($BUILD_ID) for branch main"
+    assert_output --partial "exported=$BUILD_ID"
+
+    unstub curl
+}
+
+@test "The step-key option exports nothing when no build ran the step" {
+    export BUILDKITE_PULL_REQUEST=123
+    export BUILDKITE_PLUGIN_BASE_BRANCH_BUILD_BRANCH="main"
+    export BUILDKITE_PLUGIN_BASE_BRANCH_BUILD_STEP_KEY="lighthouse"
+
+    stub curl "::echo '[{\"number\": 44, \"id\": \"$BUILD_ID\", \"jobs\": [{\"step_key\": \"build\", \"state\": \"passed\"}]}]'"
+
+    run "$PWD/hooks/environment"
+
+    assert_success
+    assert_output --partial "No successful build of branch main in the last 100 has a passed lighthouse job"
+    refute_output --partial "Found successful build"
+
+    unstub curl
+}
+
+@test "Fails on a step key that is not valid" {
+    export BUILDKITE_PULL_REQUEST=123
+    export BUILDKITE_PULL_REQUEST_BASE_BRANCH="main"
+    export BUILDKITE_PLUGIN_BASE_BRANCH_BUILD_STEP_KEY='lighthouse" or true'
+
+    run "$PWD/hooks/environment"
+
+    assert_failure
+    assert_output --partial "Error: the step-key option contains characters that are not valid"
+}
+
+@test "Without the step-key option the newest passed build is used" {
+    export BUILDKITE_PULL_REQUEST=123
+    export BUILDKITE_PULL_REQUEST_BASE_BRANCH="main"
+
+    stub curl "::echo '[{\"number\": 42, \"id\": \"$BUILD_ID\", \"jobs\": []}]'"
+
+    run "$PWD/hooks/environment"
+
+    assert_success
+    assert_output --partial "Found successful build #42 ($BUILD_ID) for branch main"
 
     unstub curl
 }

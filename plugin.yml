@@ -10,4 +10,6 @@ configuration:
   properties:
     branch:
       type: string
+    step-key:
+      type: string
   additionalProperties: false
